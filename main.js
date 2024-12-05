@@ -1,5 +1,10 @@
 import { promises as fs } from 'fs';
 import HTMLParser from 'node-html-parser'
+import { exit } from 'process';
+
+async function sleep(timeInSeconds = 1) {
+    return new Promise((resolve, reject) => setTimeout(() => resolve(), timeInSeconds * 1000))
+}
 
 async function loadText() {
     try {
@@ -10,26 +15,28 @@ async function loadText() {
         const res = await fetch("https://cemantix.certitudes.org/pedantix")
         const text = await res.text()
         const html = HTMLParser.parse(text)
-        const words = html.querySelectorAll('#article .w')
-        const paragraphs = html.querySelectorAll('.game h2, #article > p')
-        wordsStates = new Array(paragraphs.length - 1).fill().map(u => ([]));
+        const paragraphs = html.querySelectorAll('.game > h2, #article > p')
+        wordsStates = new Array(paragraphs.length).fill().map(u => ([]));
         wordsStates.forEach((p, i) => {
-            if(i === 1) return
-            paragraphs[i].querySelectorAll('.w').forEach(w => p.push({found: false, currentValue: null}))
+            paragraphs[i].querySelectorAll('.w').forEach(w => p.push({found: false, currentValue: null, distance: null}))
         })
-        console.log(wordsStates)
+        wordsStates = wordsStates.filter(ws => ws.length)
     }
+}
+
+async function loadWords() {
+    words = JSON.parse(await fs.readFile('./common.json'))
 }
 
 async function renderText() {
     console.log('Rendering...')
     await fs.writeFile('./preview.txt', wordsStates.map(p => {
         return p.map(w => {
-            if(w.round) return w.currentValue
+            if(w.found) return w.currentValue
             if(!w.currentValue) return 'null'
-            return w.currentValue
-        })
-    }).join('\n'))
+            return `['${w.currentValue}, ${w.distance}']`
+        }).join(' ')
+    }).join('\n\n'))
 }
 
 async function saveTodayState() {
@@ -51,21 +58,31 @@ async function makeAGuess(guess) {
 }
 
 let wordsStates = []
+let words = []
 
 async function main() {
     await loadText()
+    await loadWords()
     await renderText()
     
-    for(const word of [{"type":"dét.","frequency":1050561,"label":"le"}]) {
+    for(const word of words) {
+        console.log(`Guessing: ${word.label}`)
         const res = await makeAGuess(word.label)
         for(const [index, value] of Object.entries(res.score)) {
+            const flatWords = wordsStates.flat()
+            if(flatWords[index].found) continue
             if(typeof value === "string") {
-                wordsStates[index].currentValue = value
-                wordsStates[index].found = true
-            } else wordsStates[index].currentValue = value
+                flatWords[index].currentValue = value
+                flatWords[index].found = true
+            } else if(flatWords[index].currentValue <= value) {
+                flatWords[index].currentValue = word.label
+                flatWords[index].distance = value
+            }
         }
+        await renderText()
+        // await saveTodayState()
+        // await sleep(.5)
     }
-    // console.log(wordsStates)
     await renderText()
     // await saveTodayState()
 }
